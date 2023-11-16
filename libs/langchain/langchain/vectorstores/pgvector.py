@@ -182,6 +182,32 @@ class PGVector(VectorStore):
     def create_tables_if_not_exists(self) -> None:
         with self._conn.begin():
             Base.metadata.create_all(self._conn)
+            """
+            Create the vector index
+            Fix identified by @theromis in issue #13365:
+            - CREATE INDEX CONCURRENTLY langchain_pg_embedding_collection_id
+                ON langchain_pg_embedding(collection_id);
+            - CREATE INDEX CONCURRENTLY langchain_pg_collection_name 
+                ON langchain_pg_collection(name);
+            """
+            try:
+                with Session(self._conn) as session:
+                    collection = self.get_collection(session)
+                    if not collection:
+                        raise ValueError("Collection not found")
+                    statement = sqlalchemy.text(
+                        "BEGIN;"
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                        "langchain_pg_embedding_collection_id "
+                        f"ON {self.EmbeddingStore.__tablename__}(collection_id);"
+                        "CREATE INDEX IF NOT EXISTS langchain_pg_collection_name "
+                        f"ON {self.CollectionStore.__tablename__}(name);"
+                        "COMMIT;"
+                    )
+                    session.execute(statement)
+                    session.commit()
+            except Exception as e:
+                raise Exception(f"Failed to create vector index: {e}") from e
 
     def drop_tables(self) -> None:
         with self._conn.begin():
